@@ -4,6 +4,8 @@ from flask_migrate import Migrate
 from api.models import db
 from api.routes import api
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager
+from datetime import timedelta
 
 
 ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
@@ -11,8 +13,15 @@ static_file_dir = os.path.join(os.path.dirname(
     os.path.realpath(__file__)), '../dist/')
 
 app = Flask(__name__)
+# cambiar "*" por dominio exacto del front
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-CORS(app)
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=12)
+jwt = JWTManager(app)
+
+app.config["JWT_SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')  # Change this!
+jwt = JWTManager(app)
 
 db_url = os.getenv("DATABASE_URL")
 

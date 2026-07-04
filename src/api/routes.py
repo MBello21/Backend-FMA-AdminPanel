@@ -8,6 +8,21 @@ from datetime import date
 
 api = Blueprint('api', __name__)
 
+ALERTS_TO_RECOMMENDATIONS = {
+    'Temperatura máxima': 'temperatura',
+    'Temperatura mínima': 'temperatura',
+    'Rachas máximas': 'viento',
+    'Viento': 'viento',
+    'Lluvia': 'precipitacion',
+    'Precipitación acumulada': 'precipitacion',
+    'Tormentas': 'precipitacion',
+}
+CATEGORIES_TO_RECOMMENDATIONS = {
+    'amarillo': '3',
+    'naranja': '4',
+    'rojo': '5'
+}
+
 
 @api.route('/health', methods=['GET'])
 def get_health():
@@ -241,8 +256,8 @@ def post_alerts():
         except (ValueError, TypeError) as e:
             db.session.rollback()
             return jsonify({"error": f"Invalid alert: {e}"}), 400
-        db.session.commit()
-        return jsonify({"created": len(creadas), "alerts": [a.serialize() for a in creadas]}), 201
+    db.session.commit()
+    return jsonify({"created": len(creadas), "alerts": [a.serialize() for a in creadas]}), 201
 
 
 @api.route('/alerts', methods=['GET'])
@@ -269,3 +284,48 @@ def get_alerts():
 
     alerts = alert.order_by(Alerts.created_at.desc()).limit(200).all()
     return jsonify([a.serialize() for a in alerts]), 200
+
+
+@api.route('/alerts/recommendation', methods=['GET'])
+def get_alerts_with_recommendations():
+    date = request.args.get('date')
+    if not date:
+        return jsonify({'error': 'date is required'}), 400
+
+    alerts = Alerts.query.filter(Alerts.date == date).all()
+
+    if not alerts:
+        return jsonify([]), 200
+
+    recommendations_needed = set()
+
+    for alert in alerts:
+        recommendation = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter)
+        if recommendation:
+            recommendations_needed.add(recommendation)
+
+    categories_needed = set()
+
+    for alert in alerts:
+        category = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level)
+        if category:
+            categories_needed.add(category)
+
+    meteo_data = Meteorological.query.filter(
+        Meteorological.freak.in_(recommendations_needed), Meteorological.cat.in_(categories_needed)).all()
+
+    meteo_data_by_alert = {}
+
+    for meteo in meteo_data:
+        meteo_data_by_alert[meteo.freak, meteo.cat] = meteo.serialize()
+
+    data = []
+
+    for alert in alerts:
+        freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter)
+        cat = ALERTS_TO_RECOMMENDATIONS.get(alert.level)
+        data.append({
+            **alert.serialize(),
+            "recommendations": meteo_data_by_alert.get((freak, cat))
+        })
+    return jsonify(data), 200

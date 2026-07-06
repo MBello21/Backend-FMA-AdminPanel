@@ -9,6 +9,7 @@ from datetime import date
 api = Blueprint('api', __name__)
 
 ALERTS_TO_RECOMMENDATIONS = {
+    # AEMET oficiales
     'Temperatura máxima': 'temperatura',
     'Temperatura mínima': 'temperatura',
     'Rachas máximas': 'viento',
@@ -16,11 +17,20 @@ ALERTS_TO_RECOMMENDATIONS = {
     'Lluvia': 'precipitacion',
     'Precipitación acumulada': 'precipitacion',
     'Tormentas': 'precipitacion',
+    # Internas COEX
+    'Viento máximo sostenido': 'viento',
+    'Precipitación': 'precipitacion',
 }
 CATEGORIES_TO_RECOMMENDATIONS = {
+    
     'amarillo': '3',
     'naranja': '4',
-    'rojo': '5'
+    'rojo': '5',
+    'precaución (riesgo muy bajo)': '1',
+    'precaución alta (riesgo bajo)': '2',
+    'alerta amarilla (riesgo medio)': '3',
+    'alerta naranja (riesgo alto)': '4',
+    'alerta roja (riesgo muy alto)': '5',
 }
 
 
@@ -230,34 +240,64 @@ def delete_recommendation(id):
 def post_alerts():
     data = request.get_json(silent=True)
     if data is None:
-        return jsonify({'error': 'Invalid:JSON'}), 400
+        return jsonify({'error': 'Invalid JSON'}), 400
     items = data.get('alertas') if isinstance(data, dict) else data
     if not isinstance(items, list) or not items:
         return jsonify({'error': 'It is waiting an alerts list'}), 400
-    creadas = []
+
+    creadas = 0
+    actualizadas = 0
+    resultados = []
 
     for item in items:
         try:
             date_str = item.get("fecha") or date.today().isoformat()
+            fecha = datetime.fromisoformat(date_str).date()
+            zona = item.get("zona", "")[:120]
+            parametro = item.get("parametro", "")[:120]
+            origen = item.get("origen", "aemet")[:20]
 
-            alerta = Alerts(
-                zone=item.get("zona", "")[:120],
-                parameter=item.get("parametro", "")[:120],
-                level=item.get("nivel", "")[:30],
-                description=item.get("descripcion", ""),
-                start=(item.get("inicio") or "")[:8],
-                end=(item.get("fin") or "")[:8],
-                date=datetime.fromisoformat(date_str).date(),
-                origin=item.get("origen", "aemet")[:20],
-                event=item.get("evento", "nueva")[:30],
-            )
-            db.session.add(alerta)
-            creadas.append(alerta)
+            # Buscar si ya existe para hoy + zona + parametro + origen
+            existente = Alerts.query.filter_by(
+                date=fecha,
+                zone=zona,
+                parameter=parametro,
+                origin=origen,
+            ).first()
+
+            if existente:
+                existente.level = item.get("nivel", "")[:30]
+                existente.description = item.get("descripcion", "")
+                existente.start = (item.get("inicio") or "")[:8]
+                existente.end = (item.get("fin") or "")[:8]
+                existente.event = item.get("evento", "nueva")[:30]
+                resultados.append(existente)
+                actualizadas += 1
+            else:
+                alerta = Alerts(
+                    zone=zona,
+                    parameter=parametro,
+                    level=item.get("nivel", "")[:30],
+                    description=item.get("descripcion", ""),
+                    start=(item.get("inicio") or "")[:8],
+                    end=(item.get("fin") or "")[:8],
+                    date=fecha,
+                    origin=origen,
+                    event=item.get("evento", "nueva")[:30],
+                )
+                db.session.add(alerta)
+                resultados.append(alerta)
+                creadas += 1
         except (ValueError, TypeError) as e:
             db.session.rollback()
             return jsonify({"error": f"Invalid alert: {e}"}), 400
+
     db.session.commit()
-    return jsonify({"created": len(creadas), "alerts": [a.serialize() for a in creadas]}), 201
+    return jsonify({
+        "created": creadas,
+        "updated": actualizadas,
+        "alerts": [a.serialize() for a in resultados],
+    }), 201
 
 
 @api.route('/alerts', methods=['GET'])
@@ -323,7 +363,7 @@ def get_alerts_with_recommendations():
 
     for alert in alerts:
         freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter)
-        cat = ALERTS_TO_RECOMMENDATIONS.get(alert.level)
+        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level)
         data.append({
             **alert.serialize(),
             "recommendations": meteo_data_by_alert.get((freak, cat))

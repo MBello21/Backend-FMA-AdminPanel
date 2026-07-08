@@ -1,25 +1,28 @@
+import os
 from flask import Flask, request, jsonify, url_for, Blueprint, current_app
 from sqlalchemy import select, func
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from api.models import db, Meteorological, Recommendation, Users, WorkRecommendation, Alerts
+from datetime import timedelta
 from datetime import datetime
 from datetime import date
+from api.utils import send_reset_email
 
 
 api = Blueprint('api', __name__)
 
 ALERTS_TO_RECOMMENDATIONS = {
     # AEMET oficiales
-    'Temperatura máxima': 'temperatura',
-    'Temperatura mínima': 'temperatura',
-    'Rachas máximas': 'viento',
-    'Viento': 'viento',
-    'Lluvia': 'precipitacion',
-    'Precipitación acumulada': 'precipitacion',
-    'Tormentas': 'precipitacion',
+    'temperatura máxima': 'temperatura',
+    'temperatura mínima': 'temperatura',
+    'rachas máximas': 'viento',
+    'viento': 'viento',
+    'lluvia': 'precipitacion',
+    'precipitación acumulada': 'precipitacion',
+    'tormentas': 'precipitacion',
     # Internas COEX
-    'Viento máximo sostenido': 'viento',
-    'Precipitación': 'precipitacion',
+    'viento máximo sostenido': 'viento',
+    'precipitación': 'precipitacion',
 }
 CATEGORIES_TO_RECOMMENDATIONS = {
     
@@ -93,6 +96,52 @@ def signin():
         return jsonify({'error': 'Invalid user or password'}), 401
 
 
+@api.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    
+    data = request.get_json()
+    
+    if not data.get('email'):
+        return jsonify({'error': 'Email are required'}),400
+    
+    user = db.session.execute(select(Users).where(Users.email == data.get('email'))).scalar_one_or_none()
+    
+    if not user:
+        return jsonify({'error': 'Email are required'}),400
+    
+    aditional_claims = {"type":"email"}
+    validation_token = create_access_token(identity=str(user.id),aditional_claims=aditional_claims,expires_delta=timedelta(minutes=15))
+    
+    url = f"{os.getenv('VITE_FRONTEND_URL')}/reset-password?token={validation_token}"
+    
+    send_reset_email(user.email, url)
+    
+    return jsonify({'msg': 'Email send successfully'}), 200
+
+@api.route('/reset-password', methods=['PATCH'])
+@jwt_required()
+def reset_password():
+    data=request.get_json()
+    
+    user_id = get_jwt_identity()
+    
+    user = db.session.execute(select(Users).where(Users.id == user_id)).scalar_one_or_none()
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404 
+    
+    password = data.get('password')
+    
+    if not password:
+        return jsonify({'error': 'Password is required'}), 400
+    
+    user.generate_hash(password)
+    db.session.commit()
+    
+    return jsonify({'msg': 'ok'}), 201
+   
+    
+    
 @api.route('/user', methods=['GET'])
 @jwt_required()
 def get_user():
@@ -362,8 +411,11 @@ def get_alerts_with_recommendations():
     data = []
 
     for alert in alerts:
-        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
         freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
+        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
+        print('parameter:', alert.parameter, '-> freak:', freak)
+        print('level:', alert.level, '-> cat:', cat)
+        print('match:', meteo_data_by_alert.get((freak, cat)))
         data.append({
             **alert.serialize(),
             "recommendations": meteo_data_by_alert.get((freak, cat))

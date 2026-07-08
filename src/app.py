@@ -5,7 +5,9 @@ from api.models import db
 from api.routes import api
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
+from flask_email import Mail
 from datetime import timedelta
+
 
 
 ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
@@ -14,6 +16,18 @@ static_file_dir = os.path.join(os.path.dirname(
 
 app = Flask(__name__)
 # cambiar "*" por dominio exacto del front
+
+app.config.update(
+    MAIL_SERVER=os.getenv('MAIL_SERVER'),
+    MAIL_PORT=os.getenv('MAIL_PORT'),
+    MAIL_USERNAME=os.getenv('MAIL_USERNAME'),
+    MAIL_PASSWORD=os.getenv('MAIL_PASSWORD'),
+    MAIL_USE_TLS=True,
+    MAIL_USE_SSL=False
+)
+
+mail = Mail(app)
+
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")

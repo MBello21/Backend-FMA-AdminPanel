@@ -1,7 +1,9 @@
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import String, Integer, ForeignKey, Text
+from sqlalchemy import String, Integer, ForeignKey, Text, Date, func, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from flask_bcrypt import generate_password_hash, check_password_hash
+from datetime import datetime
+from datetime import date
 
 db = SQLAlchemy()
 
@@ -81,4 +83,36 @@ class WorkRecommendation(db.Model):
             "freak_id": self.freak_id,
             "type": self.type,
             "work_recommendation": self.work_recommendation
+        }
+
+
+class Alerts(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone: Mapped[str] = mapped_column(String(120), nullable=False)
+    parameter: Mapped[str] = mapped_column(String(120), nullable=False)
+    level: Mapped[str] = mapped_column(String(30), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
+    start: Mapped[str] = mapped_column(String(8), nullable=False)
+    end: Mapped[str] = mapped_column(String(8), nullable=False)
+    date: Mapped[date] = mapped_column(Date, server_default=func.now())
+    origin: Mapped[str] = mapped_column(
+        String(20), nullable=False, default='aemet')
+    event: Mapped[str] = mapped_column(
+        String(30), nullable=False, default='nueva')
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+    def serialize(self):
+        return {
+            "id": self.id,
+            "zone": self.zone,
+            "parameter": self.parameter,
+            "level": self.level,
+            "description": self.description,
+            "start": self.start,
+            "end": self.end,
+            "date": self.date.isoformat() if self.date else None,
+            "origin": self.origin,
+            "event": self.event,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

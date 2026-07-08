@@ -340,14 +340,14 @@ def get_alerts_with_recommendations():
     recommendations_needed = set()
 
     for alert in alerts:
-        recommendation = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter)
+        recommendation = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
         if recommendation:
             recommendations_needed.add(recommendation)
 
     categories_needed = set()
 
     for alert in alerts:
-        category = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level)
+        category = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
         if category:
             categories_needed.add(category)
 
@@ -362,8 +362,8 @@ def get_alerts_with_recommendations():
     data = []
 
     for alert in alerts:
-        freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter)
-        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level)
+        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
+        freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
         data.append({
             **alert.serialize(),
             "recommendations": meteo_data_by_alert.get((freak, cat))

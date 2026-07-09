@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request, jsonify, url_for, Blueprint, current_app
 from sqlalchemy import select, func
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, get_jwt
 from api.models import db, Meteorological, Recommendation, Users, WorkRecommendation, Alerts
 from datetime import timedelta
 from datetime import datetime
@@ -25,7 +25,7 @@ ALERTS_TO_RECOMMENDATIONS = {
     'precipitación': 'precipitacion',
 }
 CATEGORIES_TO_RECOMMENDATIONS = {
-    
+
     'amarillo': '3',
     'naranja': '4',
     'rojo': '5',
@@ -98,50 +98,58 @@ def signin():
 
 @api.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    
+
     data = request.get_json()
-    
+
     if not data.get('email'):
-        return jsonify({'error': 'Email are required'}),400
-    
-    user = db.session.execute(select(Users).where(Users.email == data.get('email'))).scalar_one_or_none()
-    
+        return jsonify({'error': 'Email is required'}), 400
+
+    user = db.session.execute(select(Users).where(
+        Users.email == data.get('email'))).scalar_one_or_none()
+
     if not user:
-        return jsonify({'error': 'Email are required'}),400
-    
-    aditional_claims = {"type":"email"}
-    validation_token = create_access_token(identity=str(user.id),aditional_claims=aditional_claims,expires_delta=timedelta(minutes=15))
-    
-    url = f"{os.getenv('VITE_FRONTEND_URL')}/reset-password?token={validation_token}"
-    
+        return jsonify({'msg': 'Email send successfully'}), 200
+
+    additional_claims = {"type": "email"}
+    validation_token = create_access_token(identity=str(
+        user.id), additional_claims=additional_claims, expires_delta=timedelta(minutes=15))
+
+    url = f"{os.getenv('FRONTEND_URL')}/reset-password?token={validation_token}"
+
     send_reset_email(user.email, url)
-    
+
     return jsonify({'msg': 'Email send successfully'}), 200
+
 
 @api.route('/reset-password', methods=['PATCH'])
 @jwt_required()
 def reset_password():
-    data=request.get_json()
-    
+    data = request.get_json()
+
     user_id = get_jwt_identity()
-    
-    user = db.session.execute(select(Users).where(Users.id == user_id)).scalar_one_or_none()
-    
+
+    claims = get_jwt()
+
+    if claims.get('type') != 'email':
+        return jsonify({'error': 'Invalid token'}), 401
+
+    user = db.session.execute(select(Users).where(
+        Users.id == user_id)).scalar_one_or_none()
+
     if not user:
-        return jsonify({'error': 'User not found'}), 404 
-    
+        return jsonify({'error': 'User not found'}), 404
+
     password = data.get('password')
-    
+
     if not password:
         return jsonify({'error': 'Password is required'}), 400
-    
+
     user.generate_hash(password)
     db.session.commit()
-    
-    return jsonify({'msg': 'ok'}), 201
-   
-    
-    
+
+    return jsonify({'msg': 'ok'}), 200
+
+
 @api.route('/user', methods=['GET'])
 @jwt_required()
 def get_user():

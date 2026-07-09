@@ -1,16 +1,17 @@
 from flask import current_app
-from flask_email import Message
+from flask_mail import Message
+from flask import render_template
+
 
 def send_reset_email(to_email, reset_url):
-    mail=current_app.extensions['mail']
-    
-    html = open("src/templates/activation-email.html").read().replace(
-        "{{activation_url}}", reset_url)
+    mail = current_app.extensions['mail']
+
+    html = render_template("reset-password.html", activation_url=reset_url)
     msg = Message(
         subject='Recuperación de contraseña FMA Admin Panel',
-        sender='fmapaneladmin@mgbdevops.es',
+        sender='soporte@coexca03.es',
         recipients=[to_email],
         html=html
     )
-    
+
     mail.send(msg)

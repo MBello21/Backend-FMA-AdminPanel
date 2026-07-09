@@ -14,6 +14,7 @@ flask-cors = "*"
 python-dotenv = "*"
 flask-bcrypt = "*"
 flask-jwt-extended = "*"
+mailtrap = "*"
 flask-mail = "*"
 
 [dev-packages]

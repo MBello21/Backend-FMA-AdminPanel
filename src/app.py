@@ -5,16 +5,15 @@ from api.models import db
 from api.routes import api
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-from flask_email import Mail
+from flask_mail import Mail
 from datetime import timedelta
-
 
 
 ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
 static_file_dir = os.path.join(os.path.dirname(
     os.path.realpath(__file__)), '../dist/')
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='../templates')
 # cambiar "*" por dominio exacto del front
 
 app.config.update(

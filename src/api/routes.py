@@ -1,12 +1,40 @@
+import os
 from flask import Flask, request, jsonify, url_for, Blueprint, current_app
 from sqlalchemy import select, func
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, get_jwt
 from api.models import db, Meteorological, Recommendation, Users, WorkRecommendation, Alerts
+from datetime import timedelta
 from datetime import datetime
 from datetime import date
+from api.utils import send_reset_email
 
 
 api = Blueprint('api', __name__)
+
+ALERTS_TO_RECOMMENDATIONS = {
+    # AEMET oficiales
+    'temperatura máxima': 'temperatura',
+    'temperatura mínima': 'temperatura',
+    'rachas máximas': 'viento',
+    'viento': 'viento',
+    'lluvia': 'precipitacion',
+    'precipitación acumulada': 'precipitacion',
+    'tormentas': 'precipitacion',
+    # Internas COEX
+    'viento máximo sostenido': 'viento',
+    'precipitación': 'precipitacion',
+}
+CATEGORIES_TO_RECOMMENDATIONS = {
+
+    'amarillo': '3',
+    'naranja': '4',
+    'rojo': '5',
+    'precaución (riesgo muy bajo)': '1',
+    'precaución alta (riesgo bajo)': '2',
+    'alerta amarilla (riesgo medio)': '3',
+    'alerta naranja (riesgo alto)': '4',
+    'alerta roja (riesgo muy alto)': '5',
+}
 
 
 @api.route('/health', methods=['GET'])
@@ -66,6 +94,60 @@ def signin():
                         'token': access_token})
     else:
         return jsonify({'error': 'Invalid user or password'}), 401
+
+
+@api.route('/forgot-password', methods=['POST'])
+def forgot_password():
+
+    data = request.get_json()
+
+    if not data.get('email'):
+        return jsonify({'error': 'Email is required'}), 400
+
+    user = db.session.execute(select(Users).where(
+        Users.email == data.get('email'))).scalar_one_or_none()
+
+    if not user:
+        return jsonify({'msg': 'Email send successfully'}), 200
+
+    additional_claims = {"type": "email"}
+    validation_token = create_access_token(identity=str(
+        user.id), additional_claims=additional_claims, expires_delta=timedelta(minutes=15))
+
+    url = f"{os.getenv('FRONTEND_URL')}/reset-password?token={validation_token}"
+
+    send_reset_email(user.email, url)
+
+    return jsonify({'msg': 'Email send successfully'}), 200
+
+
+@api.route('/reset-password', methods=['PATCH'])
+@jwt_required()
+def reset_password():
+    data = request.get_json()
+
+    user_id = get_jwt_identity()
+
+    claims = get_jwt()
+
+    if claims.get('type') != 'email':
+        return jsonify({'error': 'Invalid token'}), 401
+
+    user = db.session.execute(select(Users).where(
+        Users.id == user_id)).scalar_one_or_none()
+
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    password = data.get('password')
+
+    if not password:
+        return jsonify({'error': 'Password is required'}), 400
+
+    user.generate_hash(password)
+    db.session.commit()
+
+    return jsonify({'msg': 'ok'}), 200
 
 
 @api.route('/user', methods=['GET'])
@@ -215,34 +297,64 @@ def delete_recommendation(id):
 def post_alerts():
     data = request.get_json(silent=True)
     if data is None:
-        return jsonify({'error': 'Invalid:JSON'}), 400
+        return jsonify({'error': 'Invalid JSON'}), 400
     items = data.get('alertas') if isinstance(data, dict) else data
     if not isinstance(items, list) or not items:
         return jsonify({'error': 'It is waiting an alerts list'}), 400
-    creadas = []
+
+    creadas = 0
+    actualizadas = 0
+    resultados = []
 
     for item in items:
         try:
             date_str = item.get("fecha") or date.today().isoformat()
+            fecha = datetime.fromisoformat(date_str).date()
+            zona = item.get("zona", "")[:120]
+            parametro = item.get("parametro", "")[:120]
+            origen = item.get("origen", "aemet")[:20]
 
-            alerta = Alerts(
-                zone=item.get("zona", "")[:120],
-                parameter=item.get("parametro", "")[:120],
-                level=item.get("nivel", "")[:30],
-                description=item.get("descripcion", ""),
-                start=(item.get("inicio") or "")[:8],
-                end=(item.get("fin") or "")[:8],
-                date=datetime.fromisoformat(date_str).date(),
-                origin=item.get("origen", "aemet")[:20],
-                event=item.get("evento", "nueva")[:30],
-            )
-            db.session.add(alerta)
-            creadas.append(alerta)
+            # Buscar si ya existe para hoy + zona + parametro + origen
+            existente = Alerts.query.filter_by(
+                date=fecha,
+                zone=zona,
+                parameter=parametro,
+                origin=origen,
+            ).first()
+
+            if existente:
+                existente.level = item.get("nivel", "")[:30]
+                existente.description = item.get("descripcion", "")
+                existente.start = (item.get("inicio") or "")[:8]
+                existente.end = (item.get("fin") or "")[:8]
+                existente.event = item.get("evento", "nueva")[:30]
+                resultados.append(existente)
+                actualizadas += 1
+            else:
+                alerta = Alerts(
+                    zone=zona,
+                    parameter=parametro,
+                    level=item.get("nivel", "")[:30],
+                    description=item.get("descripcion", ""),
+                    start=(item.get("inicio") or "")[:8],
+                    end=(item.get("fin") or "")[:8],
+                    date=fecha,
+                    origin=origen,
+                    event=item.get("evento", "nueva")[:30],
+                )
+                db.session.add(alerta)
+                resultados.append(alerta)
+                creadas += 1
         except (ValueError, TypeError) as e:
             db.session.rollback()
             return jsonify({"error": f"Invalid alert: {e}"}), 400
-        db.session.commit()
-        return jsonify({"created": len(creadas), "alerts": [a.serialize() for a in creadas]}), 201
+
+    db.session.commit()
+    return jsonify({
+        "created": creadas,
+        "updated": actualizadas,
+        "alerts": [a.serialize() for a in resultados],
+    }), 201
 
 
 @api.route('/alerts', methods=['GET'])
@@ -269,3 +381,51 @@ def get_alerts():
 
     alerts = alert.order_by(Alerts.created_at.desc()).limit(200).all()
     return jsonify([a.serialize() for a in alerts]), 200
+
+
+@api.route('/alerts/recommendation', methods=['GET'])
+def get_alerts_with_recommendations():
+    date = request.args.get('date')
+    if not date:
+        return jsonify({'error': 'date is required'}), 400
+
+    alerts = Alerts.query.filter(Alerts.date == date).all()
+
+    if not alerts:
+        return jsonify([]), 200
+
+    recommendations_needed = set()
+
+    for alert in alerts:
+        recommendation = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
+        if recommendation:
+            recommendations_needed.add(recommendation)
+
+    categories_needed = set()
+
+    for alert in alerts:
+        category = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
+        if category:
+            categories_needed.add(category)
+
+    meteo_data = Meteorological.query.filter(
+        Meteorological.freak.in_(recommendations_needed), Meteorological.cat.in_(categories_needed)).all()
+
+    meteo_data_by_alert = {}
+
+    for meteo in meteo_data:
+        meteo_data_by_alert[meteo.freak, meteo.cat] = meteo.serialize()
+
+    data = []
+
+    for alert in alerts:
+        freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
+        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
+        print('parameter:', alert.parameter, '-> freak:', freak)
+        print('level:', alert.level, '-> cat:', cat)
+        print('match:', meteo_data_by_alert.get((freak, cat)))
+        data.append({
+            **alert.serialize(),
+            "recommendations": meteo_data_by_alert.get((freak, cat))
+        })
+    return jsonify(data), 200

@@ -1,4 +1,5 @@
 import os
+import unicodedata
 from flask import Flask, request, jsonify, url_for, Blueprint, current_app
 from sqlalchemy import select, func
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, get_jwt
@@ -11,19 +12,6 @@ from api.utils import send_reset_email
 
 api = Blueprint('api', __name__)
 
-ALERTS_TO_RECOMMENDATIONS = {
-    # AEMET oficiales
-    'temperatura máxima': 'temperatura',
-    'temperatura mínima': 'temperatura',
-    'rachas máximas': 'viento',
-    'viento': 'viento',
-    'lluvia': 'precipitacion',
-    'precipitación acumulada': 'precipitacion',
-    'tormentas': 'precipitacion',
-    # Internas COEX
-    'viento máximo sostenido': 'viento',
-    'precipitación': 'precipitacion',
-}
 CATEGORIES_TO_RECOMMENDATIONS = {
 
     'amarillo': '3',
@@ -35,6 +23,32 @@ CATEGORIES_TO_RECOMMENDATIONS = {
     'alerta naranja (riesgo alto)': '4',
     'alerta roja (riesgo muy alto)': '5',
 }
+
+
+def _norm(s):
+    """Minúsculas y sin tildes, para comparar textos del CAP de forma robusta."""
+    s = unicodedata.normalize("NFD", s or "").lower()
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+def parameter_to_freak(parameter):
+    """Traduce el texto del fenómeno de una alerta al 'freak' de las recomendaciones.
+
+    Sustituye al antiguo diccionario ALERTS_TO_RECOMMENDATIONS, que exigía el
+    texto exacto (y fallaba con "Precipitación acumulada en una hora").
+    Cubre los textos AEMET (temperatura máxima/mínima, rachas máximas, viento,
+    lluvia, precipitación acumulada..., tormentas) y las alertas internas COEX
+    (viento máximo sostenido, precipitación). Devuelve None si no hay
+    recomendaciones para ese fenómeno (nieblas, costeros, polvo...).
+    """
+    p = _norm(parameter)
+    if any(k in p for k in ("temperatura", "calor", "frio")):
+        return "temperatura"
+    if any(k in p for k in ("viento", "racha")):
+        return "viento"
+    if any(k in p for k in ("lluvia", "precipit", "tormenta", "nieve", "granizo")):
+        return "precipitacion"
+    return None
 
 
 @api.route('/health', methods=['GET'])
@@ -397,14 +411,14 @@ def get_alerts_with_recommendations():
     recommendations_needed = set()
 
     for alert in alerts:
-        recommendation = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
+        recommendation = parameter_to_freak(alert.parameter)
         if recommendation:
             recommendations_needed.add(recommendation)
 
     categories_needed = set()
 
     for alert in alerts:
-        category = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
+        category = CATEGORIES_TO_RECOMMENDATIONS.get((alert.level or "").lower())
         if category:
             categories_needed.add(category)
 
@@ -419,11 +433,8 @@ def get_alerts_with_recommendations():
     data = []
 
     for alert in alerts:
-        freak = ALERTS_TO_RECOMMENDATIONS.get(alert.parameter.lower())
-        cat = CATEGORIES_TO_RECOMMENDATIONS.get(alert.level.lower())
-        print('parameter:', alert.parameter, '-> freak:', freak)
-        print('level:', alert.level, '-> cat:', cat)
-        print('match:', meteo_data_by_alert.get((freak, cat)))
+        freak = parameter_to_freak(alert.parameter)
+        cat = CATEGORIES_TO_RECOMMENDATIONS.get((alert.level or "").lower())
         data.append({
             **alert.serialize(),
             "recommendations": meteo_data_by_alert.get((freak, cat))
